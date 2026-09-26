@@ -257,12 +257,8 @@
   var params = new URLSearchParams(location.search);
   var silent = params.has("preview"); // add ?preview to the URL to test without notifying
 
-  function once(key) {
-    try { if (sessionStorage.getItem(key)) return false; sessionStorage.setItem(key, "1"); } catch (e) {}
-    return true;
-  }
-  function notify(key, message) {
-    if (silent || !once("n-" + key)) return;
+  function notify(message) {
+    if (silent) { console.log("[notification]", message); return; }
     var url = "https://ntfy.sh/" + TOPIC;
     try {
       if (navigator.sendBeacon && navigator.sendBeacon(url, message)) return;
@@ -271,7 +267,7 @@
   }
 
   // No notification on page load: link-preview bots (WhatsApp, iMessage…) load the page too.
-  // Only real taps count.
+  // Only a real tap on the envelope counts.
   function device() {
     var ua = navigator.userAgent;
     if (/iPhone/.test(ua)) return "iPhone";
@@ -281,7 +277,37 @@
     if (/Windows/.test(ua)) return "Windows";
     return "appareil inconnu";
   }
-  var openedAt = 0;
+  function fmt(ms) {
+    var t = Math.round(ms / 1000), m = Math.floor(t / 60), sec = t % 60;
+    return m ? m + " min " + (sec < 10 ? "0" : "") + sec + " s" : sec + " s";
+  }
+
+  // Reading time = time the letter is actually on screen (pauses when she switches app or locks her phone)
+  var readMs = 0, since = 0, maxPct = 0, reachedEnd = false;
+  function startClock() { if (!since) since = Date.now(); }
+  function stopClock() { if (since) { readMs += Date.now() - since; since = 0; } }
+  function total() { return readMs + (since ? Date.now() - since : 0); }
+  function trackScroll() {
+    var h = document.documentElement.scrollHeight - innerHeight;
+    var pct = h > 0 ? Math.min(100, Math.round(scrollY / h * 100)) : 100;
+    if (pct > maxPct) maxPct = pct;
+  }
+  addEventListener("scroll", function () { if (opened) trackScroll(); }, { passive: true });
+
+  var reported = 0;
+  function report() {
+    if (!opened) return;
+    stopClock();
+    if (readMs - reported < 3000) return; // nothing new worth reporting
+    reported = readMs;
+    notify("📖 Alejandra a quitté la lettre après " + fmt(readMs) + " de lecture (lue à " + (reachedEnd ? 100 : maxPct) + " %)");
+  }
+  document.addEventListener("visibilitychange", function () {
+    if (!opened) return;
+    if (document.hidden) report();
+    else { notify("🔁 Alejandra est revenue sur la lettre"); startClock(); }
+  });
+  addEventListener("pagehide", report);
 
   var scene = document.getElementById("scene");
   var envelope = document.getElementById("envelope");
@@ -292,8 +318,8 @@
   envelope.addEventListener("click", function () {
     if (opened) return;
     opened = true;
-    openedAt = Date.now();
-    notify("open", "💌 Alejandra a ouvert l’enveloppe (" + device() + ")");
+    startClock();
+    notify("💌 Alejandra a ouvert l’enveloppe (" + device() + ")");
     scene.classList.add("opening");
     envelope.classList.add("open");
     setTimeout(function () {
@@ -315,18 +341,11 @@
     }, { rootMargin: "0px 0px -8% 0px", threshold: 0.1 });
     items.forEach(function (el) { io.observe(el); });
 
-    var atEnd = false, endTimer = null;
-    function tryEnd() {
-      var elapsed = Date.now() - openedAt;
-      if (!atEnd || !opened) return;
-      if (elapsed < 90000) { clearTimeout(endTimer); endTimer = setTimeout(tryEnd, 90000 - elapsed + 50); return; }
-      notify("end", "❤️ Alejandra a lu ta lettre jusqu’au bout (" + Math.max(1, Math.round(elapsed / 60000)) + " min de lecture)");
-      endObs.disconnect();
-    }
-    // Only count it as read if she spent at least 90 seconds on the letter
     var endObs = new IntersectionObserver(function (entries) {
-      atEnd = entries[0].isIntersecting;
-      tryEnd();
+      if (entries[0].isIntersecting && opened && !reachedEnd) {
+        reachedEnd = true; maxPct = 100;
+        notify("❤️ Alejandra a lu ta lettre jusqu’au bout (" + fmt(total()) + " de lecture)");
+      }
     }, { threshold: 1 });
     endObs.observe(document.getElementById("end"));
   } else {
