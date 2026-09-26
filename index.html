@@ -274,7 +274,18 @@
     try { fetch(url, { method: "POST", body: message, keepalive: true, mode: "no-cors" }); } catch (e) {}
   }
 
-  notify("visit", "👀 Alejandra vient d’ouvrir le lien");
+  // No notification on page load: link-preview bots (WhatsApp, iMessage…) load the page too.
+  // Only real taps count.
+  function device() {
+    var ua = navigator.userAgent;
+    if (/iPhone/.test(ua)) return "iPhone";
+    if (/iPad/.test(ua)) return "iPad";
+    if (/Android/.test(ua)) return "Android";
+    if (/Mac/.test(ua)) return "Mac";
+    if (/Windows/.test(ua)) return "Windows";
+    return "appareil inconnu";
+  }
+  var openedAt = 0;
 
   var scene = document.getElementById("scene");
   var envelope = document.getElementById("envelope");
@@ -285,7 +296,8 @@
   envelope.addEventListener("click", function () {
     if (opened) return;
     opened = true;
-    notify("open", "💌 Alejandra a ouvert l’enveloppe, elle lit ta lettre");
+    openedAt = Date.now();
+    notify("open", "💌 Alejandra a ouvert l’enveloppe (" + device() + ")");
     scene.classList.add("opening");
     envelope.classList.add("open");
     setTimeout(function () {
@@ -307,11 +319,18 @@
     }, { rootMargin: "0px 0px -8% 0px", threshold: 0.1 });
     items.forEach(function (el) { io.observe(el); });
 
+    var atEnd = false, endTimer = null;
+    function tryEnd() {
+      var elapsed = Date.now() - openedAt;
+      if (!atEnd || !opened) return;
+      if (elapsed < 90000) { clearTimeout(endTimer); endTimer = setTimeout(tryEnd, 90000 - elapsed + 50); return; }
+      notify("end", "❤️ Alejandra a lu ta lettre jusqu’au bout (" + Math.max(1, Math.round(elapsed / 60000)) + " min de lecture)");
+      endObs.disconnect();
+    }
+    // Only count it as read if she spent at least 90 seconds on the letter
     var endObs = new IntersectionObserver(function (entries) {
-      if (entries[0].isIntersecting && opened) {
-        notify("end", "❤️ Alejandra a lu ta lettre jusqu’au bout");
-        endObs.disconnect();
-      }
+      atEnd = entries[0].isIntersecting;
+      tryEnd();
     }, { threshold: 1 });
     endObs.observe(document.getElementById("end"));
   } else {
